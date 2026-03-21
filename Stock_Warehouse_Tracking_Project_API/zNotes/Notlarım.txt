@@ -1,0 +1,22 @@
+﻿FUNCTION Z_GET_STOCK_LIST2.
+*"---------------------------------------------------------
+*"  Local Interface:
+*"  EXPORTING
+*"     VALUE(ET_STOCK) TYPE  ZBK_STOCK_TT (Örnektir)
+*"---------------------------------------------------------
+
+  " KODUNU BURAYA YAZMALISIN!
+DATA: lt_stock TYPE TABLE OF zbk_stock,
+      ls_stock TYPE zbk_stock.
+
+SELECT matnr
+       wh_id
+       quantity
+       update_at
+  INTO TABLE lt_stock
+  FROM zbk_stock.
+
+LOOP AT lt_stock INTO ls_stock.
+  APPEND ls_stock TO et_stock.
+ENDLOOP.
+ENDFUNCTION.
