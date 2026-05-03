@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Stock_Warehouse_Tracking_Project_API.Application.Common;
-using Stock_Warehouse_Tracking_Project_API.Application.DTOs.Log;
+using Stock_Warehouse_Tracking_Project_API.Application.DTOs.Logging;
 using Stock_Warehouse_Tracking_Project_API.Infrastructure.Persistence;
 
 namespace Stock_Warehouse_Tracking_Project_API.API.Controllers;
