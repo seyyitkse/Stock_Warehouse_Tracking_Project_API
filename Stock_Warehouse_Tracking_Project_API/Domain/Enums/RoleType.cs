@@ -4,5 +4,6 @@ public enum RoleType
 {
     Admin = 1,
     WarehouseManager = 2,
-    Manager = 3
+    Manager = 3,
+    SuperAdmin = 4
 }

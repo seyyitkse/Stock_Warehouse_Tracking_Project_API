@@ -10,8 +10,9 @@ public static class SerilogConfiguration
     public static WebApplicationBuilder AddSerilogConfiguration(this WebApplicationBuilder builder)
     {
         var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+        var enableMsSqlSink = builder.Configuration.GetValue<bool?>("Serilog:EnableMSSqlSink") ?? false;
 
-        Log.Logger = new LoggerConfiguration()
+        var cfg = new LoggerConfiguration()
             .MinimumLevel.Information()
             .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
             .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
@@ -22,15 +23,20 @@ public static class SerilogConfiguration
                 path: "Logs/app-.log",
                 rollingInterval: RollingInterval.Day,
                 retainedFileCountLimit: 30,
-                outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
-            .WriteTo.MSSqlServer(
+                outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}");
+
+        if (enableMsSqlSink && !string.IsNullOrWhiteSpace(connectionString))
+        {
+            cfg = cfg.WriteTo.MSSqlServer(
                 connectionString: connectionString,
                 sinkOptions: new MSSqlServerSinkOptions
                 {
                     TableName = "SerilogLogs",
                     AutoCreateSqlTable = true
-                })
-            .CreateLogger();
+                });
+        }
+
+        Log.Logger = cfg.CreateLogger();
 
         builder.Host.UseSerilog();
         return builder;

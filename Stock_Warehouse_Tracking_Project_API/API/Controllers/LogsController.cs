@@ -9,7 +9,7 @@ namespace Stock_Warehouse_Tracking_Project_API.API.Controllers;
 
 [ApiController]
 [Route("api/logs")]
-[Authorize(Roles = "Admin")]
+[Authorize(Roles = "SuperAdmin,Admin")]
 public class LogsController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -55,7 +55,7 @@ public class LogsController : ControllerBase
             .Select(l => new OperationLogDto
             {
                 LogId = l.LogId,
-                UserId = l.UserId,
+                UserId = l.UserId ?? 0,
                 UserName = l.User != null ? l.User.Name : null,
                 Action = l.Action,
                 Entity = l.Entity,

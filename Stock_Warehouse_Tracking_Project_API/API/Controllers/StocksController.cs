@@ -37,7 +37,7 @@ public class StocksController : ControllerBase
     }
 
     [HttpPost("in")]
-    [Authorize(Roles = "Admin,WarehouseManager")]
+    [Authorize(Roles = "SuperAdmin,Admin,WarehouseManager")]
     [ProducesResponseType(typeof(StockDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> StockIn([FromBody] StockInRequest request, CancellationToken ct)
@@ -47,7 +47,7 @@ public class StocksController : ControllerBase
     }
 
     [HttpPost("out")]
-    [Authorize(Roles = "Admin,WarehouseManager")]
+    [Authorize(Roles = "SuperAdmin,Admin,WarehouseManager")]
     [ProducesResponseType(typeof(StockDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> StockOut([FromBody] StockOutRequest request, CancellationToken ct)
@@ -57,7 +57,7 @@ public class StocksController : ControllerBase
     }
 
     [HttpPost("transfer")]
-    [Authorize(Roles = "Admin,WarehouseManager")]
+    [Authorize(Roles = "SuperAdmin,Admin,WarehouseManager")]
     [ProducesResponseType(typeof(StockDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Transfer([FromBody] StockTransferRequest request, CancellationToken ct)

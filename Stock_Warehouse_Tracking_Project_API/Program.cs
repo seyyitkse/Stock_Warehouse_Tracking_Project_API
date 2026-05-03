@@ -11,9 +11,11 @@ using Stock_Warehouse_Tracking_Project_API.Application.Mappings;
 using Stock_Warehouse_Tracking_Project_API.Infrastructure.Logging;
 using Stock_Warehouse_Tracking_Project_API.Application.Services;
 using Stock_Warehouse_Tracking_Project_API.Application.Validators;
+using Stock_Warehouse_Tracking_Project_API.Configuration;
 using Stock_Warehouse_Tracking_Project_API.Domain.Interfaces;
 using Stock_Warehouse_Tracking_Project_API.Infrastructure.Persistence;
 using Stock_Warehouse_Tracking_Project_API.Infrastructure.Sap;
+using SapNwRfc.Pooling;
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -24,6 +26,22 @@ builder.AddSerilogConfiguration();
 // ── Database ──────────────────────────────────────────────────────────────────
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// ── SAP RFC Options + Connection Pool ─────────────────────────────────────────
+builder.Services.Configure<SapRfcOptions>(builder.Configuration.GetSection(SapRfcOptions.SectionName));
+
+builder.Services.AddSingleton<ISapConnectionPool>(sp =>
+{
+    var cfg = sp.GetRequiredService<IConfiguration>();
+    var rfc = cfg.GetSection(SapRfcOptions.SectionName).Get<SapRfcOptions>() ?? new SapRfcOptions();
+    var cs = rfc.BuildConnectionString();
+    return new SapConnectionPool(
+        connectionString: cs,
+        poolSize: rfc.PoolSize,
+        connectionIdleTimeout: TimeSpan.FromSeconds(rfc.IdleTimeoutSeconds));
+});
+
+builder.Services.AddScoped<ISapPooledConnection, SapPooledConnection>();
 
 // ── SAP Client (config flag ile Mock / RFC seçimi) ────────────────────────────
 if (builder.Configuration.GetValue<bool>("SapClient:UseMock"))
@@ -50,6 +68,17 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization();
 
+// ── CORS (SPA geliştirme / ayrı origin dağıtım) ───────────────────────────────
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.WithOrigins("http://localhost:5173", "http://127.0.0.1:5173")
+            .AllowAnyHeader()
+            .AllowAnyMethod();
+    });
+});
+
 // ── HTTP Context erişimi (CurrentUserService için) ────────────────────────────
 builder.Services.AddHttpContextAccessor();
 
@@ -61,6 +90,7 @@ builder.Services.AddScoped<IProductService, ProductService>();
 builder.Services.AddScoped<IWarehouseService, WarehouseService>();
 builder.Services.AddScoped<INewStockService, NewStockService>();
 builder.Services.AddScoped<IMovementService, MovementService>();
+builder.Services.AddScoped<IUserManagementService, UserManagementService>();
 
 // ── AutoMapper ────────────────────────────────────────────────────────────────
 builder.Services.AddAutoMapper(typeof(MappingProfile));
@@ -99,9 +129,17 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 // ── Health Checks ─────────────────────────────────────────────────────────────
-builder.Services.AddHealthChecks();
+builder.Services.AddHealthChecks()
+    .AddCheck<SapHealthCheck>("sap");
 
 var app = builder.Build();
+
+// ── Seed SuperAdmin ──────────────────────────────────────────────────────────
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await DbSeeder.SeedSuperAdminAsync(db);
+}
 
 // ── Middleware Pipeline ───────────────────────────────────────────────────────
 app.UseMiddleware<GlobalExceptionMiddleware>();
@@ -115,9 +153,14 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseCors();
+app.UseHealthChecks("/health");
+app.UseHealthChecks("/health/sap", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+{
+    Predicate = r => r.Name == "sap"
+});
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
-app.MapHealthChecks("/health");
 
 app.Run();

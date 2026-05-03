@@ -29,7 +29,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("register")]
-    [AllowAnonymous]
+    [Authorize(Roles = "SuperAdmin")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request, CancellationToken ct)

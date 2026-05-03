@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using FluentValidation;
+using SapNwRfc.Exceptions;
 
 namespace Stock_Warehouse_Tracking_Project_API.API.Middleware;
 
@@ -38,6 +39,21 @@ public class GlobalExceptionMiddleware
                 HttpStatusCode.UnprocessableEntity,
                 "Doğrulama hatası",
                 ve.Errors.Select(e => $"{e.PropertyName}: {e.ErrorMessage}")
+            ),
+            SapLibraryNotFoundException => (
+                HttpStatusCode.ServiceUnavailable,
+                "SAP bağımlılığı eksik",
+                new[] { "SAP NW RFC SDK (sapnwrfc) native kütüphaneleri bulunamadı." }.AsEnumerable()
+            ),
+            SapCommunicationFailedException => (
+                HttpStatusCode.ServiceUnavailable,
+                "SAP bağlantı hatası",
+                new[] { exception.Message }.AsEnumerable()
+            ),
+            SapException => (
+                HttpStatusCode.ServiceUnavailable,
+                "SAP RFC hatası",
+                new[] { exception.Message }.AsEnumerable()
             ),
             UnauthorizedAccessException => (
                 HttpStatusCode.Unauthorized,
