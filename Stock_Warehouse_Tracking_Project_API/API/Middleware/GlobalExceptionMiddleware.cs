@@ -43,7 +43,12 @@ public class GlobalExceptionMiddleware
             SapLibraryNotFoundException => (
                 HttpStatusCode.ServiceUnavailable,
                 "SAP bağımlılığı eksik",
-                new[] { "SAP NW RFC SDK (sapnwrfc) native kütüphaneleri bulunamadı." }.AsEnumerable()
+                new[]
+                {
+                    "SAP NW RFC SDK (sapnwrfc) native kütüphaneleri bulunamadı.",
+                    "Çözüm: SAP NW RFC SDK içinden sapnwrfc.dll + icu*.dll dosyalarını uygulamanın çalıştığı klasöre (bin\\Debug\\net10.0 veya publish çıktısı) kopyalayın.",
+                    "Uygulamanın x64 çalıştığını ve gerekirse VC++ 2015-2022 (x64) kurulu olduğunu doğrulayın."
+                }.AsEnumerable()
             ),
             SapCommunicationFailedException => (
                 HttpStatusCode.ServiceUnavailable,

@@ -19,6 +19,33 @@ Bu belge, **Stock Warehouse Tracking** projesinin SAP katmanını özetler. Ama�
 
 ---
 
+## 1.1. Backend (ASP.NET) ön koşullar — `sapnwrfc` DLL hatası
+
+Eğer backend çalışırken şu hatayı görürsen:
+
+- `System.DllNotFoundException: Unable to load DLL 'sapnwrfc' ...`
+
+bu, **SAP NW RFC SDK native kütüphanelerinin** uygulamanın çalıştığı yerde bulunmadığı (veya mimari/bağımlılık uyumsuzluğu) anlamına gelir.
+
+Yapılacaklar (Windows):
+
+1. SAP NetWeaver RFC SDK’yı indir (SAP resmi dağıtımı). İçinden en az şu dosyalar gerekir:
+   - `sapnwrfc.dll`
+   - `icudt*.dll`, `icuin*.dll`, `icuuc*.dll` (SDK sürümüne göre isimler değişebilir)
+2. Bu DLL’leri backend’in çalıştığı klasöre kopyala:
+   - lokal çalıştırma: `bin\Debug\net10.0\` (veya `bin\Release\net10.0\`)
+   - publish sonrası: publish çıktısı klasörü
+3. Uygulamanın **x64** çalıştığından emin ol:
+   - Bu projede `Stock_Warehouse_Tracking_Project_API.csproj` içinde `PlatformTarget=x64` ayarlı.
+4. Gerekirse **Microsoft Visual C++ Redistributable 2015-2022 (x64)** kur.
+
+Notlar:
+
+- DLL’leri PATH’e eklemek de mümkündür; ama en sorunsuz yöntem, DLL’leri doğrudan uygulama klasöründe bulundurmaktır.
+- `SapClient:UseMock=true` iken SAP native bağımlılığı zorunlu değildir (healthcheck bunu bilerek atlar).
+
+---
+
 ## 2. Paket ve nesne yapısı (abapGit)
 
 Kaynak kodlar GitHub’da **abapGit** formatında tutulur (`Stock_Warehouse_Tracking_Project_SAP` deposu).
