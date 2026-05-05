@@ -197,3 +197,5 @@ Stock_Warehouse_Tracking_Project_API/
 ## 📄 Lisans
 
 Bu proje [MIT Lisansı](LICENSE) ile lisanslanmıştır.
+
+
