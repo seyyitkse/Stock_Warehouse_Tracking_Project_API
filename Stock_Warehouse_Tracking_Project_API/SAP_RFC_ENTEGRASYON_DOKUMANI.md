@@ -17,6 +17,8 @@ Bu belge, **Stock Warehouse Tracking** projesinin SAP katmanını özetler. Ama�
 - SAP tarafında **doğrudan tabloya dış erişim** hedeflenmez; iş kuralları **Function Module** içinde tutulur.
 - Backend, SAP .NET tarafında **SapNwRfc** kütüphanesi ile bu FM’leri çağırır (native **SAP NW RFC SDK** DLL’leri gerekir).
 
+**Alternatif (önerilen geliştirme ortamı):** `SapClient:Provider=Http` ile ICF HTTP servisleri — native RFC SDK gerekmez. Ayrıntılar: [`SAP_HTTP_ENTEGRASYON.md`](SAP_HTTP_ENTEGRASYON.md).
+
 ---
 
 ## 1.1. Backend (ASP.NET) ön koşullar — `sapnwrfc` DLL hatası

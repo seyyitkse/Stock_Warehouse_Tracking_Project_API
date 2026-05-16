@@ -27,27 +27,38 @@ builder.AddSerilogConfiguration();
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-// ── SAP RFC Options + Connection Pool ─────────────────────────────────────────
-builder.Services.Configure<SapRfcOptions>(builder.Configuration.GetSection(SapRfcOptions.SectionName));
+// ── SAP Client (Mock | Http | Rfc) ────────────────────────────────────────────
+var sapProvider = SapClientConfiguration.GetProvider(builder.Configuration);
 
-builder.Services.AddSingleton<ISapConnectionPool>(sp =>
+switch (sapProvider)
 {
-    var cfg = sp.GetRequiredService<IConfiguration>();
-    var rfc = cfg.GetSection(SapRfcOptions.SectionName).Get<SapRfcOptions>() ?? new SapRfcOptions();
-    var cs = rfc.BuildConnectionString();
-    return new SapConnectionPool(
-        connectionString: cs,
-        poolSize: rfc.PoolSize,
-        connectionIdleTimeout: TimeSpan.FromSeconds(rfc.IdleTimeoutSeconds));
-});
+    case SapClientProvider.Mock:
+        builder.Services.AddScoped<ISapClient, MockSapClient>();
+        break;
 
-builder.Services.AddScoped<ISapPooledConnection, SapPooledConnection>();
+    case SapClientProvider.Http:
+        builder.Services.AddSapHttpClient(builder.Configuration);
+        break;
 
-// ── SAP Client (config flag ile Mock / RFC seçimi) ────────────────────────────
-if (builder.Configuration.GetValue<bool>("SapClient:UseMock"))
-    builder.Services.AddScoped<ISapClient, MockSapClient>();
-else
-    builder.Services.AddScoped<ISapClient, RfcSapClient>();
+    case SapClientProvider.Rfc:
+        builder.Services.Configure<SapRfcOptions>(builder.Configuration.GetSection(SapRfcOptions.SectionName));
+        builder.Services.AddSingleton<ISapConnectionPool>(sp =>
+        {
+            var cfg = sp.GetRequiredService<IConfiguration>();
+            var rfc = cfg.GetSection(SapRfcOptions.SectionName).Get<SapRfcOptions>() ?? new SapRfcOptions();
+            var cs = rfc.BuildConnectionString();
+            return new SapConnectionPool(
+                connectionString: cs,
+                poolSize: rfc.PoolSize,
+                connectionIdleTimeout: TimeSpan.FromSeconds(rfc.IdleTimeoutSeconds));
+        });
+        builder.Services.AddScoped<ISapPooledConnection, SapPooledConnection>();
+        builder.Services.AddScoped<ISapClient, RfcSapClient>();
+        break;
+
+    default:
+        throw new InvalidOperationException($"Unsupported SapClient provider: {sapProvider}");
+}
 
 // ── Authentication (JWT Bearer) ───────────────────────────────────────────────
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)

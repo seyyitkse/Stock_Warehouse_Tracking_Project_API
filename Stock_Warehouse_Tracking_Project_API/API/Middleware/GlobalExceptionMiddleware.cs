@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using FluentValidation;
 using SapNwRfc.Exceptions;
+using Stock_Warehouse_Tracking_Project_API.Infrastructure.Sap.Http;
 
 namespace Stock_Warehouse_Tracking_Project_API.API.Middleware;
 
@@ -49,6 +50,13 @@ public class GlobalExceptionMiddleware
                     "Çözüm: SAP NW RFC SDK içinden sapnwrfc.dll + icu*.dll dosyalarını uygulamanın çalıştığı klasöre (bin\\Debug\\net10.0 veya publish çıktısı) kopyalayın.",
                     "Uygulamanın x64 çalıştığını ve gerekirse VC++ 2015-2022 (x64) kurulu olduğunu doğrulayın."
                 }.AsEnumerable()
+            ),
+            SapHttpException sapHttp => (
+                sapHttp.StatusCode is >= 400 and < 500
+                    ? HttpStatusCode.BadGateway
+                    : HttpStatusCode.ServiceUnavailable,
+                "SAP HTTP hatası",
+                new[] { exception.Message }.AsEnumerable()
             ),
             SapCommunicationFailedException => (
                 HttpStatusCode.ServiceUnavailable,
