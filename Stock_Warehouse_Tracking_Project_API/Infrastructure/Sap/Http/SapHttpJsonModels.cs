@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace Stock_Warehouse_Tracking_Project_API.Infrastructure.Sap.Http;
 
 internal sealed class SapStockJsonDto
@@ -6,6 +9,21 @@ internal sealed class SapStockJsonDto
     public string? WhId { get; set; }
     public decimal Quantity { get; set; }
     public string? UpdatedAt { get; set; }
+}
+
+internal sealed class SapProductJsonDto
+{
+    public string? Matnr { get; set; }
+    public string? Code { get; set; }
+    public string? Name { get; set; }
+    public string? Matname { get; set; }
+    public string? Unit { get; set; }
+    public string? Category { get; set; }
+    public string? Barcode { get; set; }
+    public string? CreatedAt { get; set; }
+
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? Extra { get; set; }
 }
 
 internal sealed class SapMovementJsonResponse

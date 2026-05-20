@@ -4,6 +4,7 @@ using Stock_Warehouse_Tracking_Project_API.Application.DTOs.Product;
 using Stock_Warehouse_Tracking_Project_API.Domain.Entities;
 using Stock_Warehouse_Tracking_Project_API.Domain.Interfaces;
 using Stock_Warehouse_Tracking_Project_API.Infrastructure.Persistence;
+using Stock_Warehouse_Tracking_Project_API.Models.Sap;
 
 namespace Stock_Warehouse_Tracking_Project_API.Application.Services;
 
@@ -30,6 +31,12 @@ public class ProductService : IProductService
 
     public async Task<IReadOnlyList<ProductDto>> GetAllAsync(CancellationToken ct = default)
     {
+        if (_sap is IProductCatalogSapClient sapProductCatalog)
+        {
+            var sapProducts = await sapProductCatalog.GetProductListAsync(ct);
+            return await MapSapProductsAsync(sapProducts, ct);
+        }
+
         var products = await _db.Products.AsNoTracking().ToListAsync(ct);
         return _mapper.Map<List<ProductDto>>(products);
     }
@@ -114,5 +121,49 @@ public class ProductService : IProductService
 
         _logger.LogInformation("Ürün silindi (soft): Id={Id}", id);
         await _opLog.LogAsync(_currentUser.UserId, "DeleteProduct", "Product", true, $"Id={id}", ct: ct);
+    }
+
+    private async Task<IReadOnlyList<ProductDto>> MapSapProductsAsync(
+        IReadOnlyList<SapProductRow> sapProducts,
+        CancellationToken ct)
+    {
+        if (sapProducts.Count == 0)
+            return [];
+
+        var productCodes = sapProducts
+            .Select(product => product.Matnr.Trim())
+            .Where(code => !string.IsNullOrWhiteSpace(code))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var localProducts = await _db.Products
+            .AsNoTracking()
+            .Where(product => productCodes.Contains(product.Code))
+            .ToListAsync(ct);
+
+        var localByCode = localProducts.ToDictionary(product => product.Code, StringComparer.OrdinalIgnoreCase);
+
+        return sapProducts
+            .Where(product => !string.IsNullOrWhiteSpace(product.Matnr))
+            .Select(product =>
+            {
+                localByCode.TryGetValue(product.Matnr.Trim(), out var localProduct);
+                return ToDto(product, localProduct);
+            })
+            .ToList();
+    }
+
+    private static ProductDto ToDto(SapProductRow sapProduct, Product? localProduct)
+    {
+        return new ProductDto
+        {
+            ProductId = localProduct?.ProductId ?? 0,
+            Code = sapProduct.Matnr.Trim(),
+            Name = string.IsNullOrWhiteSpace(sapProduct.Name) ? localProduct?.Name ?? string.Empty : sapProduct.Name.Trim(),
+            Unit = string.IsNullOrWhiteSpace(sapProduct.Unit) ? localProduct?.Unit ?? string.Empty : sapProduct.Unit.Trim(),
+            Category = string.IsNullOrWhiteSpace(sapProduct.Category) ? localProduct?.Category : sapProduct.Category.Trim(),
+            Barcode = string.IsNullOrWhiteSpace(sapProduct.Barcode) ? localProduct?.Barcode : sapProduct.Barcode.Trim(),
+            CreatedAt = sapProduct.CreatedAt == default ? localProduct?.CreatedAt ?? DateTime.UtcNow : sapProduct.CreatedAt
+        };
     }
 }

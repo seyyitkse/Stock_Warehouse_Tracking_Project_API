@@ -58,6 +58,7 @@ Production’da şifreyi **User Secrets** veya ortam değişkeni ile verin: `Sap
 |------|---------------------|
 | `GET .../stock?matnr=&whId=` | `GetStockListAsync` |
 | `GET .../stock/{matnr}/{whId}` | `GetStockDetailAsync` |
+| `GET .../products` | `GetProductListAsync` |
 | `POST .../products` | `CreateProductAsync` |
 | `POST .../stock/in` | `StockInAsync` |
 | `POST .../stock/out` | `StockOutAsync` |
@@ -72,6 +73,19 @@ Production’da şifreyi **User Secrets** veya ortam değişkeni ile verin: `Sap
     "whId": "D001",
     "quantity": 50,
     "updatedAt": "2026-05-16"
+  }
+]
+```
+
+### JSON sözleşmesi (ürün satırı)
+
+```json
+[
+  {
+    "matnr": "M001",
+    "matname": "Ürün adı",
+    "unit": "ADT",
+    "createdAt": "20260516"
   }
 ]
 ```

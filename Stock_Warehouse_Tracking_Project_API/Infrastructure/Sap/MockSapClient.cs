@@ -3,8 +3,15 @@ using Stock_Warehouse_Tracking_Project_API.Models.Sap;
 
 namespace Stock_Warehouse_Tracking_Project_API.Infrastructure.Sap;
 
-public class MockSapClient : ISapClient
+public class MockSapClient : ISapClient, IProductCatalogSapClient
 {
+    private readonly List<SapProductRow> _products =
+    [
+        new SapProductRow { Matnr = "MAT-1001", Name = "Mock Ürün 1001", Unit = "ADT", CreatedAt = DateTime.UtcNow.AddDays(-10) },
+        new SapProductRow { Matnr = "MAT-1002", Name = "Mock Ürün 1002", Unit = "ADT", CreatedAt = DateTime.UtcNow.AddDays(-8) },
+        new SapProductRow { Matnr = "MAT-1003", Name = "Mock Ürün 1003", Unit = "KG", CreatedAt = DateTime.UtcNow.AddDays(-6) }
+    ];
+
     private readonly Dictionary<string, SapStockRow> _stock = new()
     {
         ["MAT-1001|WH-01"] = new SapStockRow { Matnr = "MAT-1001", WhId = "WH-01", Quantity = 120, UpdatedAt = DateTime.UtcNow.AddMinutes(-15) },
@@ -18,6 +25,11 @@ public class MockSapClient : ISapClient
         if (matnr is not null) rows = rows.Where(r => r.Matnr == matnr);
         if (whId  is not null) rows = rows.Where(r => r.WhId  == whId);
         return Task.FromResult<IReadOnlyList<SapStockRow>>(rows.ToList());
+    }
+
+    public Task<IReadOnlyList<SapProductRow>> GetProductListAsync(CancellationToken ct = default)
+    {
+        return Task.FromResult<IReadOnlyList<SapProductRow>>(_products.ToList());
     }
 
     public Task<SapStockRow?> GetStockDetailAsync(string matnr, string whId, CancellationToken ct = default)
