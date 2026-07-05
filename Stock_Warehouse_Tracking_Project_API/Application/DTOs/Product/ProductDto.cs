@@ -8,5 +8,6 @@ public class ProductDto
     public string Unit { get; set; } = string.Empty;
     public string? Category { get; set; }
     public string? Barcode { get; set; }
+    public decimal MinStock { get; set; }
     public DateTime CreatedAt { get; set; }
 }

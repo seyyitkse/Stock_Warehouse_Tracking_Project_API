@@ -15,6 +15,8 @@ using Stock_Warehouse_Tracking_Project_API.Configuration;
 using Stock_Warehouse_Tracking_Project_API.Domain.Interfaces;
 using Stock_Warehouse_Tracking_Project_API.Infrastructure.Persistence;
 using Stock_Warehouse_Tracking_Project_API.Infrastructure.Sap;
+using Stock_Warehouse_Tracking_Project_API.Infrastructure.Integrations.Notifications;
+using Stock_Warehouse_Tracking_Project_API.API.Hubs;
 using SapNwRfc.Pooling;
 
 
@@ -75,6 +77,20 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             IssuerSigningKey = new SymmetricSecurityKey(
                 Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!))
         };
+
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                var path = context.HttpContext.Request.Path;
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            }
+        };
     });
 
 builder.Services.AddAuthorization();
@@ -94,6 +110,15 @@ builder.Services.AddCors(options =>
 builder.Services.AddHttpContextAccessor();
 
 // ── Application Services ──────────────────────────────────────────────────────
+builder.Services.AddScoped<IReportService, ReportService>();
+builder.Services.AddScoped<IIntegrationService, IntegrationService>();
+builder.Services.AddScoped<INotificationProvider, SendGridNotificationProvider>();
+builder.Services.AddScoped<IStockNotificationService, StockNotificationService>();
+builder.Services.AddSignalR();
+builder.Services.AddScoped<IStockThresholdService, StockThresholdService>();
+builder.Services.AddScoped<IDashboardService, DashboardService>();
+builder.Services.AddScoped<IHealthStatusService, HealthStatusService>();
+builder.Services.AddScoped<ILogService, LogService>();
 builder.Services.AddScoped<IOperationLogService, OperationLogService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<ICurrentUserService, CurrentUserService>();
@@ -173,5 +198,6 @@ app.UseHealthChecks("/health/sap", new Microsoft.AspNetCore.Diagnostics.HealthCh
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapHub<StockHub>("/hubs/stock");
 
 app.Run();

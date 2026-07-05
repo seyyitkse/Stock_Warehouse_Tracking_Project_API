@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Stock_Warehouse_Tracking_Project_API.Application.DTOs.Stock;
+using Stock_Warehouse_Tracking_Project_API.Application.DTOs.Alert;
 using Stock_Warehouse_Tracking_Project_API.Application.Services;
 
 namespace Stock_Warehouse_Tracking_Project_API.API.Controllers;
@@ -63,6 +64,29 @@ public class StocksController : ControllerBase
     public async Task<IActionResult> Transfer([FromBody] StockTransferRequest request, CancellationToken ct)
     {
         var result = await _stockService.TransferAsync(request, ct);
+        return Ok(result);
+    }
+
+    [HttpPut("{matnr}/{whId}/threshold")]
+    [Authorize(Roles = "SuperAdmin,Admin,WarehouseManager")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    public async Task<IActionResult> UpdateThreshold(
+        string matnr,
+        string whId,
+        [FromBody] UpdateStockThresholdRequest request,
+        [FromServices] IStockThresholdService thresholdService,
+        CancellationToken ct)
+    {
+        await thresholdService.UpdateThresholdAsync(matnr, whId, request.MinLevel, ct);
+        return NoContent();
+    }
+
+    [HttpPost("in/bulk")]
+    [Authorize(Roles = "SuperAdmin,Admin,WarehouseManager")]
+    [ProducesResponseType(typeof(BulkStockInResultDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> BulkStockIn([FromBody] BulkStockInRequest request, CancellationToken ct)
+    {
+        var result = await _stockService.BulkStockInAsync(request, ct);
         return Ok(result);
     }
 }

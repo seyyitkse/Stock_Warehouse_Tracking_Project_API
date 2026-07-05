@@ -15,6 +15,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
         builder.Property(p => p.Unit).HasMaxLength(20).IsRequired();
         builder.Property(p => p.Category).HasMaxLength(100);
         builder.Property(p => p.Barcode).HasMaxLength(100);
+        builder.Property(p => p.MinStock).HasPrecision(18, 4);
 
         builder.HasQueryFilter(p => !p.IsDeleted);
     }

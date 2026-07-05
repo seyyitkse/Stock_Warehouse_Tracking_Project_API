@@ -1,4 +1,5 @@
 using Stock_Warehouse_Tracking_Project_API.Application.DTOs.Stock;
+using Stock_Warehouse_Tracking_Project_API.Application.DTOs.Alert;
 
 namespace Stock_Warehouse_Tracking_Project_API.Application.Services;
 
@@ -9,4 +10,5 @@ public interface INewStockService
     Task<StockDto> StockInAsync(StockInRequest request, CancellationToken ct = default);
     Task<StockDto> StockOutAsync(StockOutRequest request, CancellationToken ct = default);
     Task<StockDto> TransferAsync(StockTransferRequest request, CancellationToken ct = default);
+    Task<BulkStockInResultDto> BulkStockInAsync(BulkStockInRequest request, CancellationToken ct = default);
 }

@@ -1,10 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using Stock_Warehouse_Tracking_Project_API.Application.DTOs.Stock;
+using Stock_Warehouse_Tracking_Project_API.Application.DTOs.Alert;
 using Stock_Warehouse_Tracking_Project_API.Domain.Entities;
 using Stock_Warehouse_Tracking_Project_API.Domain.Enums;
 using Stock_Warehouse_Tracking_Project_API.Domain.Interfaces;
 using Stock_Warehouse_Tracking_Project_API.Infrastructure.Persistence;
 using Stock_Warehouse_Tracking_Project_API.Models.Sap;
+using Stock_Warehouse_Tracking_Project_API.API.Hubs;
 
 namespace Stock_Warehouse_Tracking_Project_API.Application.Services;
 
@@ -15,15 +17,18 @@ public class NewStockService : INewStockService
     private readonly IOperationLogService _opLog;
     private readonly ICurrentUserService _currentUser;
     private readonly ILogger<NewStockService> _logger;
+    private readonly IStockNotificationService? _stockNotify;
 
     public NewStockService(
         AppDbContext db,
         ISapClient sap,
         IOperationLogService opLog,
         ICurrentUserService currentUser,
-        ILogger<NewStockService> logger)
+        ILogger<NewStockService> logger,
+        IStockNotificationService? stockNotify = null)
     {
         _db = db; _sap = sap; _opLog = opLog; _currentUser = currentUser; _logger = logger;
+        _stockNotify = stockNotify;
     }
 
     public async Task<IReadOnlyList<StockDto>> GetStocksAsync(string? matnr = null, string? whId = null, CancellationToken ct = default)
@@ -65,7 +70,9 @@ public class NewStockService : INewStockService
             $"Matnr={request.MaterialNo}, WhId={request.WarehouseId}, Qty={request.Quantity}, SapDoc={sapResult.SapDocNo}", ct: ct);
 
         var updated = await _sap.GetStockDetailAsync(request.MaterialNo, request.WarehouseId, ct);
-        return updated is not null ? ToDto(updated) : new StockDto { MaterialNo = request.MaterialNo, WarehouseId = request.WarehouseId, Quantity = request.Quantity };
+        var dto = updated is not null ? ToDto(updated) : new StockDto { MaterialNo = request.MaterialNo, WarehouseId = request.WarehouseId, Quantity = request.Quantity };
+        await PublishStockUpdateAsync(dto);
+        return dto;
     }
 
     public async Task<StockDto> StockOutAsync(StockOutRequest request, CancellationToken ct = default)
@@ -95,7 +102,9 @@ public class NewStockService : INewStockService
             $"Matnr={request.MaterialNo}, WhId={request.WarehouseId}, Qty={request.Quantity}, SapDoc={sapResult.SapDocNo}", ct: ct);
 
         var updated = await _sap.GetStockDetailAsync(request.MaterialNo, request.WarehouseId, ct);
-        return updated is not null ? ToDto(updated) : new StockDto { MaterialNo = request.MaterialNo, WarehouseId = request.WarehouseId, Quantity = 0 };
+        var dto = updated is not null ? ToDto(updated) : new StockDto { MaterialNo = request.MaterialNo, WarehouseId = request.WarehouseId, Quantity = 0 };
+        await PublishStockUpdateAsync(dto);
+        return dto;
     }
 
     public async Task<StockDto> TransferAsync(StockTransferRequest request, CancellationToken ct = default)
@@ -128,7 +137,35 @@ public class NewStockService : INewStockService
             $"Matnr={request.MaterialNo}, Src={request.SourceWarehouseId}, Dest={request.DestWarehouseId}, Qty={request.Quantity}, SapDoc={sapResult.SapDocNo}", ct: ct);
 
         var updated = await _sap.GetStockDetailAsync(request.MaterialNo, request.DestWarehouseId, ct);
-        return updated is not null ? ToDto(updated) : new StockDto { MaterialNo = request.MaterialNo, WarehouseId = request.DestWarehouseId, Quantity = request.Quantity };
+        var dto = updated is not null ? ToDto(updated) : new StockDto { MaterialNo = request.MaterialNo, WarehouseId = request.DestWarehouseId, Quantity = request.Quantity };
+        await PublishStockUpdateAsync(dto);
+        return dto;
+    }
+
+    public async Task<BulkStockInResultDto> BulkStockInAsync(BulkStockInRequest request, CancellationToken ct = default)
+    {
+        var errors = new List<string>();
+        var success = 0;
+
+        foreach (var item in request.Items)
+        {
+            try
+            {
+                await StockInAsync(item, ct);
+                success++;
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{item.MaterialNo}/{item.WarehouseId}: {ex.Message}");
+            }
+        }
+
+        return new BulkStockInResultDto
+        {
+            SuccessCount = success,
+            FailureCount = errors.Count,
+            Errors = errors
+        };
     }
 
     private async Task SaveMovementAsync(
@@ -136,13 +173,11 @@ public class NewStockService : INewStockService
         MovementType type, decimal qty, string? refNo,
         CancellationToken ct)
     {
-        var product = await _db.Products.FirstOrDefaultAsync(p => p.Code == matnr, ct);
-        var srcWarehouse = await _db.Warehouses.FirstOrDefaultAsync(w => w.Code == srcWhCode, ct);
-        var destWarehouse = destWhCode is not null
-            ? await _db.Warehouses.FirstOrDefaultAsync(w => w.Code == destWhCode, ct)
-            : null;
-
-        if (product is null || srcWarehouse is null) return; // MSSQL'de kayıt yoksa hareketi kaydetme
+        var product = await EnsureProductAsync(matnr, ct);
+        var srcWarehouse = await EnsureWarehouseAsync(srcWhCode, ct);
+        Warehouse? destWarehouse = null;
+        if (destWhCode is not null)
+            destWarehouse = await EnsureWarehouseAsync(destWhCode, ct);
 
         _db.StockMovements.Add(new StockMovement
         {
@@ -157,6 +192,78 @@ public class NewStockService : INewStockService
             CreatedAt = DateTime.UtcNow
         });
         await _db.SaveChangesAsync(ct);
+    }
+
+    private async Task<Product> EnsureProductAsync(string matnr, CancellationToken ct)
+    {
+        var code = matnr.Trim();
+        var existing = await _db.Products.FirstOrDefaultAsync(p => p.Code == code && !p.IsDeleted, ct);
+        if (existing is not null)
+            return existing;
+
+        string name = code;
+        string unit = "ADET";
+        string? category = null;
+
+        if (_sap is IProductCatalogSapClient catalog)
+        {
+            var sapProducts = await catalog.GetProductListAsync(ct);
+            var sapProduct = sapProducts.FirstOrDefault(p =>
+                string.Equals(p.Matnr.Trim(), code, StringComparison.OrdinalIgnoreCase));
+            if (sapProduct is not null)
+            {
+                name = string.IsNullOrWhiteSpace(sapProduct.Name) ? code : sapProduct.Name.Trim();
+                unit = string.IsNullOrWhiteSpace(sapProduct.Unit) ? unit : sapProduct.Unit.Trim();
+                category = sapProduct.Category?.Trim();
+            }
+        }
+
+        var product = new Product
+        {
+            Code = code,
+            Name = name,
+            Unit = unit,
+            Category = category,
+            CreatedAt = DateTime.UtcNow
+        };
+        _db.Products.Add(product);
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation("SAP hareketi için otomatik ürün oluşturuldu: Code={Code}", code);
+        return product;
+    }
+
+    private async Task<Warehouse> EnsureWarehouseAsync(string whCode, CancellationToken ct)
+    {
+        var code = whCode.Trim();
+        var existing = await _db.Warehouses.FirstOrDefaultAsync(w => w.Code == code && !w.IsDeleted, ct);
+        if (existing is not null)
+            return existing;
+
+        var warehouse = new Warehouse
+        {
+            Code = code,
+            Name = code,
+            CreatedAt = DateTime.UtcNow
+        };
+        _db.Warehouses.Add(warehouse);
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation("SAP hareketi için otomatik depo oluşturuldu: Code={Code}", code);
+        return warehouse;
+    }
+
+    private async Task PublishStockUpdateAsync(StockDto dto)
+    {
+        if (_stockNotify is null) return;
+        try
+        {
+            await _stockNotify.NotifyStockUpdatedAsync(dto.MaterialNo, dto.WarehouseId, dto.Quantity);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "SignalR stok bildirimi gönderilemedi.");
+        }
     }
 
     private static StockDto ToDto(SapStockRow row) => new()

@@ -163,6 +163,7 @@ public class ProductService : IProductService
             Unit = string.IsNullOrWhiteSpace(sapProduct.Unit) ? localProduct?.Unit ?? string.Empty : sapProduct.Unit.Trim(),
             Category = string.IsNullOrWhiteSpace(sapProduct.Category) ? localProduct?.Category : sapProduct.Category.Trim(),
             Barcode = string.IsNullOrWhiteSpace(sapProduct.Barcode) ? localProduct?.Barcode : sapProduct.Barcode.Trim(),
+            MinStock = localProduct?.MinStock ?? 0,
             CreatedAt = sapProduct.CreatedAt == default ? localProduct?.CreatedAt ?? DateTime.UtcNow : sapProduct.CreatedAt
         };
     }

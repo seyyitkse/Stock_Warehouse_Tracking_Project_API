@@ -8,6 +8,7 @@ public class Product : BaseEntity
     public string Unit { get; set; } = string.Empty;
     public string? Category { get; set; }
     public string? Barcode { get; set; }
+    public decimal MinStock { get; set; }
 
     public ICollection<Stock> Stocks { get; set; } = new List<Stock>();
     public ICollection<StockMovement> Movements { get; set; } = new List<StockMovement>();
