@@ -24,3 +24,17 @@ public class WarehouseComparisonDto
     public decimal TotalQuantity { get; set; }
     public int LineCount { get; set; }
 }
+
+public class EmailReportRequest
+{
+    public string? To { get; set; }
+    public int PeriodDays { get; set; } = 7;
+    public bool IncludeCsv { get; set; } = true;
+}
+
+public class EmailReportResultDto
+{
+    public bool Sent { get; set; }
+    public string To { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+}

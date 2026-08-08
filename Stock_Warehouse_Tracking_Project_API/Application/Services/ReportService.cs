@@ -2,9 +2,23 @@ using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Stock_Warehouse_Tracking_Project_API.Application.DTOs.Report;
 using Stock_Warehouse_Tracking_Project_API.Domain.Enums;
+using Stock_Warehouse_Tracking_Project_API.Domain.Interfaces;
 using Stock_Warehouse_Tracking_Project_API.Infrastructure.Persistence;
 
 namespace Stock_Warehouse_Tracking_Project_API.Application.Services;
+
+public interface IReportService
+{
+    Task<StockSummaryReportDto> GetStockSummaryAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<MovementTrendPointDto>> GetMovementTrendAsync(
+        string granularity = "daily",
+        DateTime? dateFrom = null,
+        DateTime? dateTo = null,
+        CancellationToken ct = default);
+    Task<IReadOnlyList<WarehouseComparisonDto>> GetWarehouseComparisonAsync(CancellationToken ct = default);
+    Task<byte[]> ExportMovementsCsvAsync(CancellationToken ct = default);
+    Task<EmailReportResultDto> EmailReportAsync(EmailReportRequest request, int? requestingUserId, CancellationToken ct = default);
+}
 
 public class ReportService : IReportService
 {
@@ -13,19 +27,28 @@ public class ReportService : IReportService
     private readonly IProductService _productService;
     private readonly IWarehouseService _warehouseService;
     private readonly IStockThresholdService _thresholdService;
+    private readonly IEnumerable<INotificationProvider> _notificationProviders;
+    private readonly IOperationLogService _opLog;
+    private readonly IConfiguration _configuration;
 
     public ReportService(
         AppDbContext db,
         INewStockService stockService,
         IProductService productService,
         IWarehouseService warehouseService,
-        IStockThresholdService thresholdService)
+        IStockThresholdService thresholdService,
+        IEnumerable<INotificationProvider> notificationProviders,
+        IOperationLogService opLog,
+        IConfiguration configuration)
     {
         _db = db;
         _stockService = stockService;
         _productService = productService;
         _warehouseService = warehouseService;
         _thresholdService = thresholdService;
+        _notificationProviders = notificationProviders;
+        _opLog = opLog;
+        _configuration = configuration;
     }
 
     public async Task<StockSummaryReportDto> GetStockSummaryAsync(CancellationToken ct = default)
@@ -45,15 +68,19 @@ public class ReportService : IReportService
         };
     }
 
-    public async Task<IReadOnlyList<MovementTrendPointDto>> GetMovementTrendAsync(string granularity = "daily", CancellationToken ct = default)
+    public async Task<IReadOnlyList<MovementTrendPointDto>> GetMovementTrendAsync(
+        string granularity = "daily",
+        DateTime? dateFrom = null,
+        DateTime? dateTo = null,
+        CancellationToken ct = default)
     {
-        var since = granularity == "weekly"
-            ? DateTime.UtcNow.AddDays(-84)
-            : DateTime.UtcNow.AddDays(-30);
+        var to = dateTo?.ToUniversalTime() ?? DateTime.UtcNow;
+        var from = dateFrom?.ToUniversalTime()
+            ?? (granularity == "weekly" ? to.AddDays(-84) : to.AddDays(-30));
 
         var movements = await _db.StockMovements
             .AsNoTracking()
-            .Where(m => m.Date >= since)
+            .Where(m => m.Date >= from && m.Date <= to)
             .ToListAsync(ct);
 
         IEnumerable<IGrouping<DateTime, Domain.Entities.StockMovement>> grouped = granularity == "weekly"
@@ -125,6 +152,102 @@ public class ReportService : IReportService
         }
 
         return Encoding.UTF8.GetBytes(sb.ToString());
+    }
+
+    public async Task<EmailReportResultDto> EmailReportAsync(
+        EmailReportRequest request,
+        int? requestingUserId,
+        CancellationToken ct = default)
+    {
+        var sendGrid = _notificationProviders.FirstOrDefault(p => p.Name == "SendGrid");
+        if (sendGrid is null)
+        {
+            return new EmailReportResultDto { Sent = false, Message = "SendGrid provider bulunamadı." };
+        }
+
+        var to = request.To;
+        if (string.IsNullOrWhiteSpace(to) && requestingUserId.HasValue)
+        {
+            var pref = await _db.UserNotificationPreferences.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.UserId == requestingUserId.Value, ct);
+            to = pref?.AlertEmail;
+        }
+        if (string.IsNullOrWhiteSpace(to))
+            to = _configuration["Integrations:SendGrid:AlertEmail"];
+
+        if (string.IsNullOrWhiteSpace(to))
+        {
+            return new EmailReportResultDto
+            {
+                Sent = false,
+                Message = "Alıcı e-posta adresi bulunamadı. Tercihler veya SendGrid AlertEmail ayarlayın."
+            };
+        }
+
+        var summary = await GetStockSummaryAsync(ct);
+        var warehouses = await GetWarehouseComparisonAsync(ct);
+        var periodDays = request.PeriodDays <= 0 ? 7 : request.PeriodDays;
+
+        var text = new StringBuilder();
+        text.AppendLine("Stok Depo Takip — Dönemsel Rapor");
+        text.AppendLine($"Dönem: son {periodDays} gün");
+        text.AppendLine($"Toplam stok: {summary.TotalQuantity}");
+        text.AppendLine($"Ürün: {summary.ProductCount}, Depo: {summary.WarehouseCount}");
+        text.AppendLine($"Kritik stok: {summary.LowStockCount}, Boş satır: {summary.EmptyStockLines}");
+        text.AppendLine();
+        text.AppendLine("Depo dağılımı (üst 5):");
+        foreach (var w in warehouses.Take(5))
+            text.AppendLine($"- {w.WarehouseName} ({w.WarehouseCode}): {w.TotalQuantity}");
+
+        var html = $@"
+<html><body style='font-family:Segoe UI,Arial,sans-serif;color:#0f172a'>
+  <h2>Stok Depo Takip — Dönemsel Rapor</h2>
+  <p>Dönem: son <strong>{periodDays}</strong> gün</p>
+  <ul>
+    <li>Toplam stok: <strong>{summary.TotalQuantity}</strong></li>
+    <li>Ürün / Depo: <strong>{summary.ProductCount}</strong> / <strong>{summary.WarehouseCount}</strong></li>
+    <li>Kritik stok: <strong>{summary.LowStockCount}</strong></li>
+    <li>Boş satır: <strong>{summary.EmptyStockLines}</strong></li>
+  </ul>
+  <h3>Depo dağılımı</h3>
+  <ol>
+    {string.Join("", warehouses.Take(5).Select(w => $"<li>{System.Net.WebUtility.HtmlEncode(w.WarehouseName)}: {w.TotalQuantity}</li>"))}
+  </ol>
+</body></html>";
+
+        byte[]? csv = null;
+        if (request.IncludeCsv)
+            csv = await ExportMovementsCsvAsync(ct);
+
+        var sent = await sendGrid.SendEmailAsync(new EmailMessage
+        {
+            To = to,
+            Subject = $"Stok Raporu — son {periodDays} gün",
+            Body = text.ToString(),
+            HtmlBody = html,
+            AttachmentBytes = csv,
+            AttachmentFileName = csv is null ? null : "hareket-raporu.csv",
+            AttachmentContentType = "text/csv"
+        }, ct);
+
+        await _opLog.LogAsync(
+            requestingUserId,
+            "ReportEmailed",
+            "Report",
+            sent,
+            details: $"To={to}, PeriodDays={periodDays}, IncludeCsv={request.IncludeCsv}",
+            errorMessage: sent ? null : "Rapor e-postası gönderilemedi.",
+            source: EventLogSource.System,
+            severity: sent ? EventLogSeverity.Info : EventLogSeverity.Error,
+            actorUserId: requestingUserId,
+            ct: ct);
+
+        return new EmailReportResultDto
+        {
+            Sent = sent,
+            To = to,
+            Message = sent ? "Rapor e-postası gönderildi." : "Rapor e-postası gönderilemedi."
+        };
     }
 
     private static DateTime StartOfWeek(DateTime date)
