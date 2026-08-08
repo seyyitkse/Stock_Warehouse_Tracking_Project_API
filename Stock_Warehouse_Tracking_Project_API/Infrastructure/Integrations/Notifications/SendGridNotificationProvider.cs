@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Stock_Warehouse_Tracking_Project_API.Domain.Interfaces;
@@ -23,7 +24,10 @@ public class SendGridNotificationProvider : INotificationProvider
         return Task.FromResult(!string.IsNullOrWhiteSpace(apiKey));
     }
 
-    public async Task<bool> SendEmailAsync(string to, string subject, string body, CancellationToken ct = default)
+    public Task<bool> SendEmailAsync(string to, string subject, string body, CancellationToken ct = default)
+        => SendEmailAsync(new EmailMessage { To = to, Subject = subject, Body = body }, ct);
+
+    public async Task<bool> SendEmailAsync(EmailMessage message, CancellationToken ct = default)
     {
         var apiKey = _configuration["Integrations:SendGrid:ApiKey"];
         if (string.IsNullOrWhiteSpace(apiKey))
@@ -37,13 +41,44 @@ public class SendGridNotificationProvider : INotificationProvider
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
 
         var fromEmail = _configuration["Integrations:SendGrid:FromEmail"] ?? "noreply@stockwarehouse.local";
-        var payload = new
+        var content = new List<object>
         {
-            personalizations = new[] { new { to = new[] { new { email = to } } } },
-            from = new { email = fromEmail },
-            subject,
-            content = new[] { new { type = "text/plain", value = body } }
+            new { type = "text/plain", value = message.Body }
         };
+        if (!string.IsNullOrWhiteSpace(message.HtmlBody))
+            content.Add(new { type = "text/html", value = message.HtmlBody });
+
+        object payload;
+        if (message.AttachmentBytes is { Length: > 0 } && !string.IsNullOrWhiteSpace(message.AttachmentFileName))
+        {
+            payload = new
+            {
+                personalizations = new[] { new { to = new[] { new { email = message.To } } } },
+                from = new { email = fromEmail },
+                subject = message.Subject,
+                content,
+                attachments = new[]
+                {
+                    new
+                    {
+                        content = Convert.ToBase64String(message.AttachmentBytes),
+                        type = message.AttachmentContentType,
+                        filename = message.AttachmentFileName,
+                        disposition = "attachment"
+                    }
+                }
+            };
+        }
+        else
+        {
+            payload = new
+            {
+                personalizations = new[] { new { to = new[] { new { email = message.To } } } },
+                from = new { email = fromEmail },
+                subject = message.Subject,
+                content
+            };
+        }
 
         var response = await client.PostAsJsonAsync("https://api.sendgrid.com/v3/mail/send", payload, ct);
         if (!response.IsSuccessStatusCode)

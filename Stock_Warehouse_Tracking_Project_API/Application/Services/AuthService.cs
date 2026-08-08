@@ -40,7 +40,8 @@ public class AuthService : IAuthService
         if (user is null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
         {
             _logger.LogWarning("Başarısız login: {Email}", request.Email);
-            await _opLog.LogAsync(null, "Login", "AppUser", false, $"Email: {request.Email}", "Geçersiz e-posta veya şifre.", ct);
+            await _opLog.LogAsync(null, "Login", "AppUser", false, $"Email: {request.Email}", "Geçersiz e-posta veya şifre.",
+                severity: Domain.Enums.EventLogSeverity.Warning, ct: ct);
             throw new UnauthorizedAccessException("Geçersiz e-posta veya şifre.");
         }
 
@@ -66,7 +67,8 @@ public class AuthService : IAuthService
         var exists = await _db.Users.AnyAsync(u => u.Email == request.Email, ct);
         if (exists)
         {
-            await _opLog.LogAsync(null, "Register", "AppUser", false, $"Email: {request.Email}", "E-posta zaten kayıtlı.", ct);
+            await _opLog.LogAsync(null, "Register", "AppUser", false, $"Email: {request.Email}", "E-posta zaten kayıtlı.",
+                severity: Domain.Enums.EventLogSeverity.Warning, ct: ct);
             throw new InvalidOperationException("Bu e-posta adresi zaten kayıtlı.");
         }
 

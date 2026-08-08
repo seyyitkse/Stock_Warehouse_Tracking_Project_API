@@ -9,5 +9,8 @@ public interface IOperationLogService
         bool isSuccess,
         string? details = null,
         string? errorMessage = null,
+        string? source = null,
+        string? severity = null,
+        int? actorUserId = null,
         CancellationToken ct = default);
 }

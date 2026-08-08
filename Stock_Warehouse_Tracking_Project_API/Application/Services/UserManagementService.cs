@@ -10,12 +10,18 @@ public class UserManagementService : IUserManagementService
 {
     private readonly AppDbContext _db;
     private readonly IOperationLogService _opLog;
+    private readonly ICurrentUserService _currentUser;
     private readonly ILogger<UserManagementService> _logger;
 
-    public UserManagementService(AppDbContext db, IOperationLogService opLog, ILogger<UserManagementService> logger)
+    public UserManagementService(
+        AppDbContext db,
+        IOperationLogService opLog,
+        ICurrentUserService currentUser,
+        ILogger<UserManagementService> logger)
     {
         _db = db;
         _opLog = opLog;
+        _currentUser = currentUser;
         _logger = logger;
     }
 
@@ -68,7 +74,9 @@ public class UserManagementService : IUserManagementService
         await _db.Entry(user).Reference(u => u.Role).LoadAsync(ct);
 
         _logger.LogInformation("Yeni kullanıcı oluşturuldu: {Email}, Rol: {RoleId}", user.Email, user.RoleId);
-        await _opLog.LogAsync(user.UserId, "CreateUser", "AppUser", true, $"Email: {user.Email}, RoleId: {user.RoleId}", ct: ct);
+        await _opLog.LogAsync(user.UserId, "CreateUser", "AppUser", true,
+            $"Email: {user.Email}, RoleId: {user.RoleId}",
+            actorUserId: _currentUser.UserId, ct: ct);
 
         return MapToDto(user);
     }
@@ -99,7 +107,9 @@ public class UserManagementService : IUserManagementService
         await _db.Entry(user).Reference(u => u.Role).LoadAsync(ct);
 
         _logger.LogInformation("Kullanıcı güncellendi: {UserId}", id);
-        await _opLog.LogAsync(id, "UpdateUser", "AppUser", true, $"Email: {user.Email}, RoleId: {user.RoleId}", ct: ct);
+        await _opLog.LogAsync(id, "UpdateUser", "AppUser", true,
+            $"Email: {user.Email}, RoleId: {user.RoleId}",
+            actorUserId: _currentUser.UserId, ct: ct);
 
         return MapToDto(user);
     }
@@ -121,7 +131,9 @@ public class UserManagementService : IUserManagementService
         await _db.SaveChangesAsync(ct);
 
         _logger.LogInformation("Kullanıcı rolü değiştirildi: {UserId}, {OldRole} → {NewRole}", id, oldRoleId, request.RoleId);
-        await _opLog.LogAsync(id, "ChangeRole", "AppUser", true, $"OldRoleId: {oldRoleId}, NewRoleId: {request.RoleId}", ct: ct);
+        await _opLog.LogAsync(id, "ChangeRole", "AppUser", true,
+            $"OldRoleId: {oldRoleId}, NewRoleId: {request.RoleId}",
+            actorUserId: _currentUser.UserId, ct: ct);
     }
 
     public async Task DeleteUserAsync(int id, CancellationToken ct = default)
@@ -136,7 +148,9 @@ public class UserManagementService : IUserManagementService
         await _db.SaveChangesAsync(ct);
 
         _logger.LogInformation("Kullanıcı silindi (soft): {UserId}", id);
-        await _opLog.LogAsync(id, "DeleteUser", "AppUser", true, $"Email: {user.Email}", ct: ct);
+        await _opLog.LogAsync(id, "DeleteUser", "AppUser", true,
+            $"Email: {user.Email}",
+            actorUserId: _currentUser.UserId, ct: ct);
     }
 
     public async Task<IReadOnlyList<RoleDto>> GetRolesAsync(CancellationToken ct = default)

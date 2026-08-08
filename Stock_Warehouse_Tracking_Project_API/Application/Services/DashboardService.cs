@@ -1,6 +1,7 @@
 using Stock_Warehouse_Tracking_Project_API.Application.DTOs.Dashboard;
 using Stock_Warehouse_Tracking_Project_API.Application.DTOs.Movement;
 using Stock_Warehouse_Tracking_Project_API.Configuration;
+using Stock_Warehouse_Tracking_Project_API.Domain.Enums;
 using Stock_Warehouse_Tracking_Project_API.Domain.Interfaces;
 
 namespace Stock_Warehouse_Tracking_Project_API.Application.Services;
@@ -14,6 +15,7 @@ public class DashboardService : IDashboardService
     private readonly IStockThresholdService _thresholdService;
     private readonly ISapClient _sap;
     private readonly IConfiguration _configuration;
+    private readonly IOperationLogService _opLog;
     private readonly ILogger<DashboardService> _logger;
 
     public DashboardService(
@@ -24,6 +26,7 @@ public class DashboardService : IDashboardService
         IStockThresholdService thresholdService,
         ISapClient sap,
         IConfiguration configuration,
+        IOperationLogService opLog,
         ILogger<DashboardService> logger)
     {
         _productService = productService;
@@ -33,22 +36,17 @@ public class DashboardService : IDashboardService
         _thresholdService = thresholdService;
         _sap = sap;
         _configuration = configuration;
+        _opLog = opLog;
         _logger = logger;
     }
 
     public async Task<DashboardSummaryDto> GetSummaryAsync(CancellationToken ct = default)
     {
-        var productsTask = _productService.GetAllAsync(ct);
-        var warehousesTask = _warehouseService.GetAllAsync(ct);
-        var stocksTask = _stockService.GetStocksAsync(ct: ct);
-        var movementsTask = _movementService.GetMovementsAsync(new MovementFilterRequest { Page = 1, PageSize = 8 }, ct);
-
-        await Task.WhenAll(productsTask, warehousesTask, stocksTask, movementsTask);
-
-        var products = await productsTask;
-        var warehouses = await warehousesTask;
-        var stocks = await stocksTask;
-        var movements = await movementsTask;
+        // Aynı scoped DbContext üzerinde paralel EF sorguları çalıştırılamaz.
+        var products = await _productService.GetAllAsync(ct);
+        var warehouses = await _warehouseService.GetAllAsync(ct);
+        var stocks = await _stockService.GetStocksAsync(ct: ct);
+        var movements = await _movementService.GetMovementsAsync(new MovementFilterRequest { Page = 1, PageSize = 8 }, ct);
 
         var warehouseByCode = warehouses.ToDictionary(w => w.Code, StringComparer.OrdinalIgnoreCase);
         var productByCode = products.ToDictionary(p => p.Code, StringComparer.OrdinalIgnoreCase);
@@ -112,6 +110,16 @@ public class DashboardService : IDashboardService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "SAP health check failed during dashboard summary.");
+            await _opLog.LogAsync(
+                null,
+                "SapUnhealthy",
+                "SAP",
+                false,
+                details: ex.Message,
+                errorMessage: "SAP bağlantı kontrolü başarısız.",
+                source: EventLogSource.System,
+                severity: EventLogSeverity.Warning,
+                ct: ct);
             return "unhealthy";
         }
     }

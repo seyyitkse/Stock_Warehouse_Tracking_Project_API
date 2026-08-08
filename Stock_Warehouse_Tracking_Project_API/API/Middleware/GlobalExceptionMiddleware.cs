@@ -56,7 +56,7 @@ public class GlobalExceptionMiddleware
                     ? HttpStatusCode.BadGateway
                     : HttpStatusCode.ServiceUnavailable,
                 "SAP HTTP hatası",
-                new[] { exception.Message }.AsEnumerable()
+                BuildSapHttpDetails(sapHttp)
             ),
             SapCommunicationFailedException => (
                 HttpStatusCode.ServiceUnavailable,
@@ -102,5 +102,21 @@ public class GlobalExceptionMiddleware
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(response,
             new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+    }
+
+    private static IEnumerable<string> BuildSapHttpDetails(SapHttpException sapHttp)
+    {
+        yield return sapHttp.Message;
+
+        if (string.IsNullOrWhiteSpace(sapHttp.ResponseBody))
+            yield break;
+
+        var body = sapHttp.ResponseBody.Trim();
+        if (body.Length > 300)
+            body = body[..300] + "...";
+
+        // Avoid duplicating the body when it is already embedded in the message.
+        if (!sapHttp.Message.Contains(body, StringComparison.Ordinal))
+            yield return $"SAP yanıtı: {body}";
     }
 }

@@ -56,21 +56,45 @@ public sealed class HttpSapClient : ISapClient, IProductCatalogSapClient
         string whId,
         CancellationToken ct = default)
     {
+        var trimmedMatnr = matnr.Trim();
+        var trimmedWhId = whId.Trim();
         var path = ReplacePathTokens(_options.StockDetailPath, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["matnr"] = matnr.Trim(),
-            ["whId"] = whId.Trim()
+            ["matnr"] = trimmedMatnr,
+            ["whId"] = trimmedWhId
         });
 
         try
         {
-            var row = await GetJsonAsync<SapStockJsonDto>(path, ct);
-            return row is null ? null : MapStockRow(row);
+            using var response = await _httpClient.GetAsync(path, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+
+            if ((int)response.StatusCode == 404)
+                return null;
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("SAP HTTP GET {Path} failed: {Status} {Body}", path, (int)response.StatusCode, body);
+                throw new SapHttpException(
+                    $"SAP HTTP GET failed ({(int)response.StatusCode}): {Truncate(body)}")
+                {
+                    StatusCode = (int)response.StatusCode,
+                    ResponseBody = body
+                };
+            }
+
+            var fromDetail = TryParseStockDetailBody(body, trimmedMatnr, trimmedWhId);
+            if (fromDetail is not null)
+                return fromDetail;
         }
         catch (SapHttpException ex) when (ex.StatusCode == 404)
         {
             return null;
         }
+
+        // SAP detail path often returns a full stock array; filtered list query is reliable.
+        var list = await GetStockListAsync(trimmedMatnr, trimmedWhId, ct);
+        return FindStockRow(list, trimmedMatnr, trimmedWhId);
     }
 
     public async Task<SapCreateProductResult> CreateProductAsync(
@@ -155,8 +179,72 @@ public sealed class HttpSapClient : ISapClient, IProductCatalogSapClient
         }
         catch (JsonException ex)
         {
-            throw new SapHttpException("SAP HTTP response JSON parse failed.", ex) { ResponseBody = body };
+            throw new SapHttpException(
+                $"SAP HTTP response JSON parse failed: {Truncate(body)}", ex)
+            {
+                ResponseBody = body
+            };
         }
+    }
+
+    private static SapStockRow? TryParseStockDetailBody(string body, string matnr, string whId)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                var dto = root.Deserialize<SapStockJsonDto>(JsonOptions);
+                return dto is null ? null : MapStockRow(dto);
+            }
+
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                var rows = new List<SapStockRow>();
+                foreach (var item in root.EnumerateArray())
+                {
+                    var dto = item.Deserialize<SapStockJsonDto>(JsonOptions);
+                    if (dto is not null)
+                        rows.Add(MapStockRow(dto));
+                }
+
+                return FindStockRow(rows, matnr, whId);
+            }
+        }
+        catch (JsonException)
+        {
+            // Caller falls back to filtered stock list.
+        }
+
+        return null;
+    }
+
+    private static SapStockRow? FindStockRow(IReadOnlyList<SapStockRow> rows, string matnr, string whId)
+    {
+        if (rows.Count == 0)
+            return null;
+
+        var exact = rows.FirstOrDefault(r =>
+            string.Equals(r.Matnr, matnr, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(r.WhId, whId, StringComparison.OrdinalIgnoreCase));
+        if (exact is not null)
+            return exact;
+
+        // SAP WH_ID is often CHAR5/CHAR10 and truncates longer codes on write/filter.
+        var matnrMatches = rows
+            .Where(r => string.Equals(r.Matnr, matnr, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var prefixMatch = matnrMatches.FirstOrDefault(r =>
+            whId.StartsWith(r.WhId, StringComparison.OrdinalIgnoreCase) ||
+            r.WhId.StartsWith(whId, StringComparison.OrdinalIgnoreCase));
+
+        return prefixMatch ?? matnrMatches.FirstOrDefault() ?? rows[0];
     }
 
     private async Task<List<SapProductJsonDto>> GetProductJsonListAsync(string relativePath, CancellationToken ct)
@@ -247,13 +335,112 @@ public sealed class HttpSapClient : ISapClient, IProductCatalogSapClient
 
         try
         {
-            return JsonSerializer.Deserialize<SapMovementJsonResponse>(responseBody, JsonOptions)
+            return ParseMovementResponse(responseBody)
                    ?? new SapMovementJsonResponse { Success = true };
         }
         catch (JsonException ex)
         {
-            throw new SapHttpException("SAP HTTP response JSON parse failed.", ex) { ResponseBody = responseBody };
+            throw new SapHttpException(
+                $"SAP HTTP response JSON parse failed: {Truncate(responseBody)}", ex)
+            {
+                ResponseBody = responseBody
+            };
         }
+    }
+
+    private static SapMovementJsonResponse? ParseMovementResponse(string responseBody)
+    {
+        using var document = JsonDocument.Parse(responseBody);
+        var root = document.RootElement;
+
+        if (root.ValueKind == JsonValueKind.Object)
+        {
+            // Prefer known contract; also accept ABAP-style EV_SUCCESS / EV_DOC_NO / EV_ERROR.
+            var mapped = new SapMovementJsonResponse
+            {
+                Success = ReadFlexibleBool(root, "success", "ev_success", "evSuccess"),
+                SapDocNo = ReadFlexibleString(root, "sapDocNo", "sap_doc_no", "ev_doc_no", "evDocNo", "docNo"),
+                ErrorMessage = ReadFlexibleString(root, "errorMessage", "error_message", "ev_error", "evError", "error")
+            };
+
+            if (HasAnyProperty(root, "success", "ev_success", "evSuccess", "sapDocNo", "ev_doc_no", "errorMessage", "ev_error"))
+                return mapped;
+
+            return root.Deserialize<SapMovementJsonResponse>(JsonOptions);
+        }
+
+        // Some handlers return a bare document number string.
+        if (root.ValueKind == JsonValueKind.String)
+        {
+            var value = root.GetString();
+            return new SapMovementJsonResponse
+            {
+                Success = !string.IsNullOrWhiteSpace(value),
+                SapDocNo = value
+            };
+        }
+
+        throw new JsonException($"Unexpected SAP movement response kind: {root.ValueKind}");
+    }
+
+    private static bool HasAnyProperty(JsonElement root, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (TryGetProperty(root, name, out _))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool ReadFlexibleBool(JsonElement root, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!TryGetProperty(root, name, out var value))
+                continue;
+
+            return value.ValueKind switch
+            {
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Number => value.TryGetInt32(out var n) && n != 0,
+                JsonValueKind.String => IsSapTrue(value.GetString()),
+                _ => false
+            };
+        }
+
+        return false;
+    }
+
+    private static string? ReadFlexibleString(JsonElement root, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!TryGetProperty(root, name, out var value))
+                continue;
+
+            return value.ValueKind switch
+            {
+                JsonValueKind.Null or JsonValueKind.Undefined => null,
+                JsonValueKind.String => value.GetString(),
+                _ => value.ToString()
+            };
+        }
+
+        return null;
+    }
+
+    private static bool IsSapTrue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        return value.Equals("X", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("1", StringComparison.OrdinalIgnoreCase)
+               || value.Equals("yes", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildPathWithQuery(string path, string? matnr, string? whId)

@@ -10,6 +10,14 @@ namespace Stock_Warehouse_Tracking_Project_API.Application.Services;
 
 public class ProductService : IProductService
 {
+    /// <summary>SAP'de silinemeyen eski test / anlamsız malzeme kodları — UI'da gizlenir.</summary>
+    private static readonly HashSet<string> HiddenSapMaterialCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "M001",
+        "M002",
+        "W009"
+    };
+
     private readonly AppDbContext _db;
     private readonly ISapClient _sap;
     private readonly IOperationLogService _opLog;
@@ -55,7 +63,6 @@ public class ProductService : IProductService
         if (codeExists)
             throw new InvalidOperationException($"'{request.Code}' kodlu ürün zaten mevcut.");
 
-        // SAP'a ürün oluştur
         var sapResult = await _sap.CreateProductAsync(new Models.Sap.SapCreateProductRequest
         {
             Matnr = request.Code,
@@ -64,12 +71,33 @@ public class ProductService : IProductService
             Category = request.Category
         }, ct);
 
-        if (!sapResult.Success)
+        // SAP'de kayıt zaten varsa yerel kaydı yine oluştur/güncelle (demo senkronu).
+        var sapAlreadyExists = !sapResult.Success &&
+            (sapResult.ErrorMessage?.Contains("zaten", StringComparison.OrdinalIgnoreCase) == true
+             || sapResult.ErrorMessage?.Contains("already", StringComparison.OrdinalIgnoreCase) == true);
+
+        if (!sapResult.Success && !sapAlreadyExists)
         {
             _logger.LogWarning("SAP ürün oluşturma başarısız: {Error}", sapResult.ErrorMessage);
             await _opLog.LogAsync(_currentUser.UserId, "CreateProduct", "Product", false,
-                $"Code={request.Code}", sapResult.ErrorMessage, ct);
+                $"Code={request.Code}", sapResult.ErrorMessage, ct: ct);
             throw new InvalidOperationException($"SAP hatası: {sapResult.ErrorMessage}");
+        }
+
+        var existing = await _db.Products
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(p => p.Code == request.Code, ct);
+
+        if (existing is not null)
+        {
+            existing.Name = request.Name;
+            existing.Unit = request.Unit;
+            existing.Category = request.Category;
+            existing.Barcode = request.Barcode;
+            existing.IsDeleted = false;
+            existing.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+            return _mapper.Map<ProductDto>(existing);
         }
 
         var product = new Product
@@ -145,26 +173,59 @@ public class ProductService : IProductService
 
         return sapProducts
             .Where(product => !string.IsNullOrWhiteSpace(product.Matnr))
+            .Where(product => !HiddenSapMaterialCodes.Contains(product.Matnr.Trim()))
+            .Where(product => !IsJunkSapProduct(product))
             .Select(product =>
             {
                 localByCode.TryGetValue(product.Matnr.Trim(), out var localProduct);
                 return ToDto(product, localProduct);
             })
+            .OrderBy(product => product.Code, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private static bool IsJunkSapProduct(SapProductRow product)
+    {
+        var name = product.Name?.Trim() ?? string.Empty;
+        if (name.Contains("Test Urun", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Test", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Boş birimli ve isimsiz kayıtlar operasyon ekranını kirletmesin.
+        return string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(product.Unit);
     }
 
     private static ProductDto ToDto(SapProductRow sapProduct, Product? localProduct)
     {
+        var sapName = sapProduct.Name?.Trim() ?? string.Empty;
+        var localName = localProduct?.Name?.Trim() ?? string.Empty;
+
+        // Yerel ad varsa (Türkçe karakter / daha açıklayıcı isim) onu tercih et.
+        var displayName = !string.IsNullOrWhiteSpace(localName) ? localName
+            : !string.IsNullOrWhiteSpace(sapName) ? sapName
+            : sapProduct.Matnr.Trim();
+
         return new ProductDto
         {
             ProductId = localProduct?.ProductId ?? 0,
             Code = sapProduct.Matnr.Trim(),
-            Name = string.IsNullOrWhiteSpace(sapProduct.Name) ? localProduct?.Name ?? string.Empty : sapProduct.Name.Trim(),
-            Unit = string.IsNullOrWhiteSpace(sapProduct.Unit) ? localProduct?.Unit ?? string.Empty : sapProduct.Unit.Trim(),
-            Category = string.IsNullOrWhiteSpace(sapProduct.Category) ? localProduct?.Category : sapProduct.Category.Trim(),
-            Barcode = string.IsNullOrWhiteSpace(sapProduct.Barcode) ? localProduct?.Barcode : sapProduct.Barcode.Trim(),
+            Name = displayName,
+            Unit = FirstNonEmpty(localProduct?.Unit, sapProduct.Unit) ?? "ADET",
+            Category = FirstNonEmpty(localProduct?.Category, sapProduct.Category) ?? "Genel",
+            Barcode = FirstNonEmpty(localProduct?.Barcode, sapProduct.Barcode),
             MinStock = localProduct?.MinStock ?? 0,
             CreatedAt = sapProduct.CreatedAt == default ? localProduct?.CreatedAt ?? DateTime.UtcNow : sapProduct.CreatedAt
         };
+    }
+
+    private static string? FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        }
+
+        return null;
     }
 }

@@ -1,4 +1,5 @@
 using Stock_Warehouse_Tracking_Project_API.Domain.Entities;
+using Stock_Warehouse_Tracking_Project_API.Domain.Enums;
 using Stock_Warehouse_Tracking_Project_API.Domain.Interfaces;
 using Stock_Warehouse_Tracking_Project_API.Infrastructure.Persistence;
 
@@ -22,25 +23,36 @@ public class OperationLogService : IOperationLogService
         bool isSuccess,
         string? details = null,
         string? errorMessage = null,
+        string? source = null,
+        string? severity = null,
+        int? actorUserId = null,
         CancellationToken ct = default)
     {
         try
         {
+            var resolvedSource = string.IsNullOrWhiteSpace(source) ? EventLogSource.User : source;
+            var resolvedSeverity = string.IsNullOrWhiteSpace(severity)
+                ? (isSuccess ? EventLogSeverity.Info : EventLogSeverity.Error)
+                : severity;
+            var resolvedActor = actorUserId ?? (resolvedSource == EventLogSource.User ? userId : actorUserId);
+
             _db.OperationLogs.Add(new OperationLog
             {
                 UserId = userId,
+                ActorUserId = resolvedActor,
                 Action = action,
                 Entity = entity,
                 IsSuccess = isSuccess,
                 Details = details,
                 ErrorMessage = errorMessage,
+                Source = resolvedSource,
+                Severity = resolvedSeverity,
                 Timestamp = DateTime.UtcNow
             });
             await _db.SaveChangesAsync(ct);
         }
         catch (Exception ex)
         {
-            // Log kaydı asıl hatayı gizlememeli
             _logger.LogError(ex, "OperationLog kaydedilemedi. Action={Action}, Entity={Entity}", action, entity);
         }
     }

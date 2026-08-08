@@ -34,13 +34,24 @@ public class NewStockService : INewStockService
     public async Task<IReadOnlyList<StockDto>> GetStocksAsync(string? matnr = null, string? whId = null, CancellationToken ct = default)
     {
         var rows = await _sap.GetStockListAsync(matnr, whId, ct);
-        return rows.Select(ToDto).ToList();
+        return rows
+            .Where(IsVisibleStockRow)
+            .Select(ToDto)
+            .OrderBy(s => s.MaterialNo, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(s => s.WarehouseId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     public async Task<StockDto?> GetStockDetailAsync(string matnr, string whId, CancellationToken ct = default)
     {
+        if (IsHiddenMaterial(matnr) || IsHiddenWarehouse(whId))
+            return null;
+
         var row = await _sap.GetStockDetailAsync(matnr, whId, ct);
-        return row is null ? null : ToDto(row);
+        if (row is null || !IsVisibleStockRow(row))
+            return null;
+
+        return ToDto(row);
     }
 
     public async Task<StockDto> StockInAsync(StockInRequest request, CancellationToken ct = default)
@@ -60,7 +71,7 @@ public class NewStockService : INewStockService
             _logger.LogWarning("SAP stok girişi başarısız: {Error}", sapResult.ErrorMessage);
             await _opLog.LogAsync(_currentUser.UserId, "StockIn", "Stock", false,
                 $"Matnr={request.MaterialNo}, WhId={request.WarehouseId}, Qty={request.Quantity}",
-                sapResult.ErrorMessage, ct);
+                sapResult.ErrorMessage, ct: ct);
             throw new InvalidOperationException($"SAP hatası: {sapResult.ErrorMessage}");
         }
 
@@ -92,7 +103,7 @@ public class NewStockService : INewStockService
             _logger.LogWarning("SAP stok çıkışı başarısız: {Error}", sapResult.ErrorMessage);
             await _opLog.LogAsync(_currentUser.UserId, "StockOut", "Stock", false,
                 $"Matnr={request.MaterialNo}, WhId={request.WarehouseId}, Qty={request.Quantity}",
-                sapResult.ErrorMessage, ct);
+                sapResult.ErrorMessage, ct: ct);
             throw new InvalidOperationException($"SAP hatası: {sapResult.ErrorMessage}");
         }
 
@@ -126,7 +137,7 @@ public class NewStockService : INewStockService
             _logger.LogWarning("SAP transfer başarısız: {Error}", sapResult.ErrorMessage);
             await _opLog.LogAsync(_currentUser.UserId, "Transfer", "Stock", false,
                 $"Matnr={request.MaterialNo}, Src={request.SourceWarehouseId}, Dest={request.DestWarehouseId}, Qty={request.Quantity}",
-                sapResult.ErrorMessage, ct);
+                sapResult.ErrorMessage, ct: ct);
             throw new InvalidOperationException($"SAP hatası: {sapResult.ErrorMessage}");
         }
 
@@ -264,6 +275,33 @@ public class NewStockService : INewStockService
         {
             _logger.LogWarning(ex, "SignalR stok bildirimi gönderilemedi.");
         }
+    }
+
+    private static readonly HashSet<string> HiddenMaterialCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "M001",
+        "M002",
+        "W009"
+    };
+
+    private static readonly HashSet<string> HiddenWarehouseCodes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Kahra"
+    };
+
+    private static bool IsHiddenMaterial(string? matnr)
+        => !string.IsNullOrWhiteSpace(matnr) && HiddenMaterialCodes.Contains(matnr.Trim());
+
+    private static bool IsHiddenWarehouse(string? whId)
+        => !string.IsNullOrWhiteSpace(whId) && HiddenWarehouseCodes.Contains(whId.Trim());
+
+    private static bool IsVisibleStockRow(SapStockRow row)
+    {
+        if (IsHiddenMaterial(row.Matnr) || IsHiddenWarehouse(row.WhId))
+            return false;
+
+        // Sıfır stok satırları listeyi kirletmesin (temizlenmiş test kayıtları).
+        return row.Quantity > 0;
     }
 
     private static StockDto ToDto(SapStockRow row) => new()

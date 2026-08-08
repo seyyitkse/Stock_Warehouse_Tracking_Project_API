@@ -77,6 +77,10 @@ Production’da şifreyi **User Secrets** veya ortam değişkeni ile verin: `Sap
 ]
 ```
 
+**Not:** `GET .../stock/{matnr}/{whId}` bazı SAP handler’larda tek nesne yerine liste döndürebilir.
+API bunu tolere eder; eşleşen satırı seçer, bulamazsa `?matnr=&whId=` filtreli listeye düşer.
+Depo kodunu SAP alan uzunluğuna göre kısa tutun (ör. `CHAR5` → `D001`).
+
 ### JSON sözleşmesi (ürün satırı)
 
 ```json
