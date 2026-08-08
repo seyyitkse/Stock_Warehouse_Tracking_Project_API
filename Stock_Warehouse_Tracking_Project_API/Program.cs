@@ -16,6 +16,7 @@ using Stock_Warehouse_Tracking_Project_API.Domain.Interfaces;
 using Stock_Warehouse_Tracking_Project_API.Infrastructure.Persistence;
 using Stock_Warehouse_Tracking_Project_API.Infrastructure.Sap;
 using Stock_Warehouse_Tracking_Project_API.Infrastructure.Integrations.Notifications;
+using Stock_Warehouse_Tracking_Project_API.Infrastructure.Background;
 using Stock_Warehouse_Tracking_Project_API.API.Hubs;
 using SapNwRfc.Pooling;
 
@@ -113,6 +114,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IIntegrationService, IntegrationService>();
 builder.Services.AddScoped<INotificationProvider, SendGridNotificationProvider>();
+builder.Services.AddScoped<INotificationPreferenceService, NotificationPreferenceService>();
 builder.Services.AddScoped<IStockNotificationService, StockNotificationService>();
 builder.Services.AddSignalR();
 builder.Services.AddScoped<IStockThresholdService, StockThresholdService>();
@@ -127,6 +129,7 @@ builder.Services.AddScoped<IWarehouseService, WarehouseService>();
 builder.Services.AddScoped<INewStockService, NewStockService>();
 builder.Services.AddScoped<IMovementService, MovementService>();
 builder.Services.AddScoped<IUserManagementService, UserManagementService>();
+builder.Services.AddHostedService<WeeklyReportBackgroundService>();
 
 // ── AutoMapper ────────────────────────────────────────────────────────────────
 builder.Services.AddAutoMapper(typeof(MappingProfile));

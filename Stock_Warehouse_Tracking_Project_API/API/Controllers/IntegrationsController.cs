@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Stock_Warehouse_Tracking_Project_API.Application.Services;
+using System.Security.Claims;
 
 namespace Stock_Warehouse_Tracking_Project_API.API.Controllers;
 
@@ -42,36 +43,35 @@ public class IntegrationsController : ControllerBase
 [Authorize(Roles = "SuperAdmin,Admin")]
 public class NotificationsController : ControllerBase
 {
-    private readonly IConfiguration _configuration;
+    private readonly INotificationPreferenceService _preferenceService;
 
-    public NotificationsController(IConfiguration configuration)
+    public NotificationsController(INotificationPreferenceService preferenceService)
     {
-        _configuration = configuration;
+        _preferenceService = preferenceService;
     }
 
     [HttpGet("preferences")]
-    public IActionResult GetPreferences()
+    public async Task<IActionResult> GetPreferences(CancellationToken ct)
     {
-        return Ok(new
-        {
-            emailEnabled = !string.IsNullOrWhiteSpace(_configuration["Integrations:SendGrid:AlertEmail"]),
-            alertEmail = _configuration["Integrations:SendGrid:AlertEmail"] ?? ""
-        });
+        var userId = GetUserId();
+        if (userId is null) return Unauthorized();
+        return Ok(await _preferenceService.GetForUserAsync(userId.Value, ct));
     }
 
     [HttpPut("preferences")]
-    public IActionResult UpdatePreferences([FromBody] NotificationPreferencesRequest request)
+    public async Task<IActionResult> UpdatePreferences(
+        [FromBody] UpdateNotificationPreferencesRequest request,
+        CancellationToken ct)
     {
-        return Ok(new
-        {
-            message = "Tercihler kaydedildi (runtime config; kalıcı kayıt için appsettings güncelleyin).",
-            alertEmail = request.AlertEmail
-        });
+        var userId = GetUserId();
+        if (userId is null) return Unauthorized();
+        var updated = await _preferenceService.UpsertForUserAsync(userId.Value, request, ct);
+        return Ok(updated);
     }
-}
 
-public class NotificationPreferencesRequest
-{
-    public bool EmailEnabled { get; set; }
-    public string? AlertEmail { get; set; }
+    private int? GetUserId()
+    {
+        var claim = User.FindFirstValue("userId");
+        return int.TryParse(claim, out var id) ? id : null;
+    }
 }

@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Stock_Warehouse_Tracking_Project_API.Application.DTOs.Report;
@@ -26,9 +27,13 @@ public class ReportsController : ControllerBase
 
     [HttpGet("movement-trend")]
     [ProducesResponseType(typeof(IReadOnlyList<MovementTrendPointDto>), StatusCodes.Status200OK)]
-    public async Task<IActionResult> GetMovementTrend([FromQuery] string granularity = "daily", CancellationToken ct = default)
+    public async Task<IActionResult> GetMovementTrend(
+        [FromQuery] string granularity = "daily",
+        [FromQuery] DateTime? dateFrom = null,
+        [FromQuery] DateTime? dateTo = null,
+        CancellationToken ct = default)
     {
-        return Ok(await _reportService.GetMovementTrendAsync(granularity, ct));
+        return Ok(await _reportService.GetMovementTrendAsync(granularity, dateFrom, dateTo, ct));
     }
 
     [HttpGet("warehouse-comparison")]
@@ -43,8 +48,19 @@ public class ReportsController : ControllerBase
     public async Task<IActionResult> Export([FromQuery] string format = "csv", CancellationToken ct = default)
     {
         var bytes = await _reportService.ExportMovementsCsvAsync(ct);
-        var contentType = format == "xlsx" ? "text/csv" : "text/csv";
-        var fileName = format == "xlsx" ? "hareket-raporu.csv" : "hareket-raporu.csv";
+        var contentType = "text/csv";
+        var fileName = "hareket-raporu.csv";
         return File(bytes, contentType, fileName);
+    }
+
+    [HttpPost("email")]
+    [ProducesResponseType(typeof(EmailReportResultDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> EmailReport([FromBody] EmailReportRequest request, CancellationToken ct)
+    {
+        var userIdClaim = User.FindFirstValue("userId");
+        int? userId = int.TryParse(userIdClaim, out var id) ? id : null;
+        var result = await _reportService.EmailReportAsync(request, userId, ct);
+        return result.Sent ? Ok(result) : BadRequest(result);
     }
 }
